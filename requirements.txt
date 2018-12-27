@@ -1,0 +1,16 @@
+BeautifulSoup4
+
+dash
+dash-core-components
+dash-html-components
+dash-renderer
+dash-table-experiments
+
+feather
+lxml
+html5lib
+
+numpy==1.14.5
+pandas==0.23.1
+pandas-datareader
+requests-cache
