@@ -70,12 +70,8 @@ def df_weekly_to_quarterly(df, date_column, addional_indexes=["symbol"],
 	df = df.groupby([df.quarter] + addional_indexes)[stats_cols].mean()
 	return df.reset_index()
 
-def combine_dataframes(dataframes):
-    return pd.concat(dataframes)
-
 def clean_df(df):
 	df = df_weekly_to_quarterly(df, "date")
-
 	return df
 
 def pickle_response(response):

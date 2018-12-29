@@ -15,7 +15,6 @@ from time import time
 
 from utils import (
     cache_path,
-    combine_dataframes,
     pickled_page_exists,
     pickle_response,
     load_pickled_page,
@@ -179,7 +178,7 @@ class MFScraper:
             df["symbol"] = symbol["symbol"]
             df["name"] = symbol["name"]
             prices.append(df)
-        return combine_dataframes(prices)
+        return pd.concat(prices)
 
     def logit(self, start, key, log_type):
         msg = None
