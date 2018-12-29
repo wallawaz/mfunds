@@ -7,6 +7,7 @@ import requests
 
 from requests.exceptions import ConnectionError
 
+import numpy as np
 import pandas as pd
 import pandas_datareader.data as web
 
@@ -29,8 +30,7 @@ EXPIRE_AFTER = datetime.timedelta(days=7)
 
 split_new_line = lambda x: x.split("\n")[0]
 soupit = lambda x: BeautifulSoup(x, "html.parser")
-#XXX TODO
-# cast start_date, end_date to be week basis so we actually cache.
+
 
 class MFScraper:
     def __init__(self, ds, cache_path, cache_expire_days,
@@ -40,7 +40,6 @@ class MFScraper:
         self.session = requests_cache.CachedSession(cache_name=cache_path,
                                                     backend="sqlite",
                                                     expire_after=self.cache_expire_days)
-
         self.start = start
         self.end = end
         self.ignore = {
@@ -51,6 +50,8 @@ class MFScraper:
             ],
             "symbols": [
                 "HYPPX",
+                "JCUNX",
+                "JHBC",
             ]
         }
 
@@ -84,7 +85,7 @@ class MFScraper:
             link_name = link.get_text()
             if link_name:
                 for l in limit:
-                    if re.match(link_name.lower(), l):
+                    if re.match(link_name, l, re.IGNORECASE):
                         href = split_new_line(link["href"])
                         fund_families[link_name] = {
                             "href": href
@@ -233,3 +234,58 @@ class MFScraper:
         sort_key = lambda x: x["growth_rate"]
         return sorted(growth_rates, key=sort_key, reverse=True)[:n]
 
+    def winners_losers(self, df):
+        #XXX TODO `top_fund_families` should use this.
+
+        unique_symbols = df.symbol.unique()
+        size = 5
+        if len(unique_symbols) <= size * 2:
+            return df
+
+        d = "Date"
+        gr = "growth_rate"
+        min_date = "min_date"
+        max_date = "max_date"
+        s = "symbol"
+
+        def min_max_dates(x):
+            names = {
+                min_date: np.min(x[d]),
+                max_date: np.max(x[d]),
+            }
+            return pd.Series(names)
+
+        def back_to_datetime64(df, column):
+            df[column] = df[column].astype(np.datetime64)
+            return df
+
+        def growth_rate(x):
+            return (x["Close_x"] - x["Close_y"]) / x["Close_x"]
+
+        df_min_max = pd.DataFrame(
+            df.groupby(s).apply(min_max_dates)
+        ).reset_index()
+
+        df_min_max = back_to_datetime64(df_min_max, min_date)
+        df_min_max = back_to_datetime64(df_min_max, max_date)
+
+        interested_columns = [d, "Close", s]
+
+        # Match to min_date => Close_x
+        df_min_max = (
+            df_min_max.merge(df[interested_columns], left_on=[s, min_date],
+                         right_on=[s, d])
+        )
+        # Match to max_date => Close_y
+        df_min_max = (
+            df_min_max.merge(df[interested_columns], left_on=[s, max_date],
+                         right_on=[s, d])
+        )
+        df_min_max[gr] = df_min_max.apply(growth_rate, axis=1)
+
+        df_top_5 = df_min_max.nlargest(size, gr)
+        df_bottom_5 = df_min_max.nsmallest(size, gr)
+
+        df_min_max = pd.concat((df_top_5, df_bottom_5))[[s,gr]]
+
+        return df.merge(df_min_max, left_on=[s], right_on=[s])

@@ -6,13 +6,15 @@ import dash_core_components as dcc
 import dash_html_components as html
 import dash_table_experiments as dt
 
+from dash.dependencies import Input, Output
+
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 import re
 import requests
 import plotly.graph_objs as go
-from urllib.error import HTTPError 
+from urllib.error import HTTPError
 import time
 
 from scraper import MFScraper
@@ -33,8 +35,40 @@ from utils import (
 
 SLEEP_INTERVAL = 0.5
 
-def get_app():
-    return dash.Dash(sharing=True, csrf_protect=False)
+
+def get_app(header, mf_scraper):
+    app = dash.Dash(sharing=True, csrf_protect=False)
+
+    # inital layout
+    app.layout = get_app_layout(header, mf_scraper)
+
+    @app.callback(
+        Output("graph-mf", "figure"),
+        [Input("ff-id", "value")])
+    def update_figure(selected_family):
+        print(selected_family)
+        selected_ff = mf_scraper.fund_families[selected_family]
+        selected_df = selected_ff["prices"]
+
+        selected_df = mf_scraper.winners_losers(selected_df)
+        funds = []
+        for i in selected_df.symbol.unique():
+            df_symbol = selected_df[selected_df.symbol == i]
+            funds.append(
+                go.Scatter(
+                    x=df_symbol["Date"],
+                    y=df_symbol["Close"],
+                    text=df_symbol["Close"],
+                    mode="lines",
+                    name=i,
+                )
+            )
+        return {
+            "data": funds,
+            "layout": time_series_layout(),
+        }
+
+    return app
 
 def get_all_fund_families(limit):
 
@@ -47,32 +81,19 @@ def get_all_fund_families(limit):
 
     mf_scraper.run_all(limit=limit)
 
-    top_fund_families = mf_scraper.top_fund_families()
+    #top_fund_families = mf_scraper.top_fund_families()
+    mf_scraper.top_fund_families = mf_scraper.top_fund_families()
+
     out = []
-    for f in top_fund_families:
+    for f in mf_scraper.top_fund_families:
         ff = mf_scraper.fund_families[f["fund_family"]]
         df = ff["prices"]
         df = mf_scraper.merge_symbols_to_daily(df, dataframe=True)
-        df["fund_family"] = f["fund_family"] 
+        df["fund_family"] = f["fund_family"]
         out.append(df)
 
-    df_all = combine_dataframes(out)
-    return (top_fund_families, df_all)
-
-def load_data_frame(d):
-    if d["symbol"] is None:
-        return None
-
-    df = get_tingo_weekly(d["symbol"])
-    if df is None:
-        return None
-
-    # Keep the full df for the time being..
-    #df = df_weekly_to_quarterly(
-    #    df,
-    #    keep_cols=d,
-    #)
-    return df
+    mf_scraper.df_all = combine_dataframes(out)
+    return mf_scraper
 
 def time_series_graphes(df):
     graphs = [
@@ -86,8 +107,7 @@ def time_series_graphes(df):
     ]
     return graphs
 
-def time_series_layout(df):
-    #margin={'l': 40, 'b': 40, 't': 10, 'r': 10, "autoexpand":True},
+def time_series_layout():
 	return go.Layout(
 		xaxis={"type": "date", "title": "Date"},
 
@@ -97,7 +117,6 @@ def time_series_layout(df):
         ),
 		legend={'x': 0, 'y': 1},
 		hovermode='closest',
-        #style={"width": "100%", "height": "100%"},
         autosize=True,
         height=900,
 	)
@@ -106,19 +125,27 @@ def get_datatable(df):
 	df = df[["symbol", "close"]]
 	return df.groupby(df.symbol).mean().reset_index()
 
-def get_app_layout(header, df):
-	ts_graphs = time_series_graphes(df)
-	ts_layout = time_series_layout(df)
+def get_app_layout(header, mf_scraper):
+    ts_graphs = time_series_graphes(mf_scraper.df_all)
+    ts_layout = time_series_layout()
+    fund_families = [
+        {"label": i, "value": i} for i in mf_scraper.fund_families.keys()
+    ]
 
-	#df_datatable = get_datatable(df)
-	l = html.Div([
+    l = html.Div([
             html.H4(header),
+            html.Label("Specific Fund Family"),
+            dcc.Dropdown(
+                id="ff-id",
+                options=fund_families,
+                #multi=True
+            ),
             dcc.Graph(
                 id="graph-mf",
-				figure={
-					"data": ts_graphs,
-					"layout": ts_layout
-				},
+                figure={
+                    "data": ts_graphs,
+                    "layout": ts_layout
+                },
                 style={"height": "100%"},
             ),
         ],
@@ -135,7 +162,8 @@ def get_app_layout(header, df):
 
     #    id="datatable-mf",
     #),
-	return l
+    return l
+
 
 def logit(dataframes):
     l = len(dataframes)
@@ -145,12 +173,11 @@ def logit(dataframes):
         print(msg)
 
 def load_all_dataframes(limit):
-    top_families, df = get_all_fund_families(limit)
-    return top_families, df
+    mf_scraper = get_all_fund_families(limit)
+    return mf_scraper
 
 if __name__ == "__main__":
-    app = get_app()
-    header = "MF Ranking"
+    inital_header = "Top Fund Families by Growth Rate"
 
     parser = argparse.ArgumentParser()
     #parser.add_argument("--no-cache", dest="no_cache", action="store_true")
@@ -158,9 +185,10 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    top_families, df_all = load_all_dataframes(args.limit)
+    mf_scraper = load_all_dataframes(args.limit)
 
     print("done grabbing dataframes.")
-    app.layout = get_app_layout(header, df_all)
+    print("loading dash app")
 
+    app = get_app(inital_header, mf_scraper)
     app.run_server(debug=args.debug)

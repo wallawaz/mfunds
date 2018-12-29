@@ -56,9 +56,8 @@ def get_tingo_weekly(symbol):
         df = None
     return df
 
-def df_weekly_to_quarterly(df,
-						   date_column, addional_indexes=["symbol"],
-						   stats_cols=["close"]):
+def df_weekly_to_quarterly(df, date_column, addional_indexes=["symbol"],
+                           stats_cols=["close"]):
     #df.reset_index(inplace=True)
     #df.set_index(index, inplace=True)
 
