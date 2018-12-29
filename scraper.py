@@ -288,3 +288,6 @@ class MFScraper:
         df_min_max = pd.concat((df_top_5, df_bottom_5))[[s,gr]]
 
         return df.merge(df_min_max, left_on=[s], right_on=[s])
+
+    def combine_dataframes(self, dfs):
+        return pd.concat(dfs)

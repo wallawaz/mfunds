@@ -92,7 +92,7 @@ def get_all_fund_families(limit):
         df["fund_family"] = f["fund_family"]
         out.append(df)
 
-    mf_scraper.df_all = combine_dataframes(out)
+    mf_scraper.df_all = mf_scraper.combine_dataframes(out)
     return mf_scraper
 
 def time_series_graphes(df):
