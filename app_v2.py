@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 
 import re
 import requests
+import sys
 import plotly.graph_objs as go
 from urllib.error import HTTPError
 import time
@@ -20,7 +21,6 @@ import time
 from scraper import MFScraper
 
 from utils import (
-    combine_dataframes,
     cache_path,
     df_weekly_to_quarterly,
     feather_path,
@@ -46,21 +46,41 @@ def get_app(header, mf_scraper):
         Output("graph-mf", "figure"),
         [Input("ff-id", "value")])
     def update_figure(selected_family):
-        print(selected_family)
+
+        color_green = "#088c31"
+        color_red = "#FC6955"
         selected_ff = mf_scraper.fund_families[selected_family]
         selected_df = selected_ff["prices"]
 
         selected_df = mf_scraper.winners_losers(selected_df)
+
+        sorted_symbols = []
+        for s in selected_df.symbol.unique():
+           gr = selected_df[selected_df.symbol == s]["growth_rate"].values[0]
+           sorted_symbols.append((gr, s))
+
+        sorted_symbols.sort(key=lambda x: x[0], reverse=True)
+
         funds = []
-        for i in selected_df.symbol.unique():
+        for gr, i in sorted_symbols:
             df_symbol = selected_df[selected_df.symbol == i]
+
+            winner = selected_df[selected_df.symbol == i]["winner"].values[0]
+            if winner[0] == "w":
+                color = color_green
+            else:
+                color = color_red
+
             funds.append(
                 go.Scatter(
                     x=df_symbol["Date"],
                     y=df_symbol["Close"],
-                    text=df_symbol["Close"],
+                    text=df_symbol["name_x"] + "<br>" + df_symbol["winner"],
                     mode="lines",
                     name=i,
+                    marker=dict(
+                        color=color
+                    ),
                 )
             )
         return {
@@ -70,18 +90,20 @@ def get_app(header, mf_scraper):
 
     return app
 
-def get_all_fund_families(limit):
+def get_mf_scraper(limit):
 
     ds = "yahoo"
     cache_name = cache_path()
 
     # 7 day cache expiration.
     start_date, end_date = get_start_and_end_dates()
-    mf_scraper = MFScraper(ds, cache_name, 7, start_date, end_date)
+    mf_scraper = MFScraper(ds, cache_name, 7, start_date, end_date,
+                           limit=limit)
+    return mf_scraper
 
-    mf_scraper.run_all(limit=limit)
+def load_mf_scraper_with_df(mf_scraper):
 
-    #top_fund_families = mf_scraper.top_fund_families()
+    mf_scraper.run_all()
     mf_scraper.top_fund_families = mf_scraper.top_fund_families()
 
     out = []
@@ -172,20 +194,26 @@ def logit(dataframes):
         msg="{d} {s}: grabbed stats on {l} symbols".format(d=datetime.now(), s=symbol, l=l)
         print(msg)
 
-def load_all_dataframes(limit):
-    mf_scraper = get_all_fund_families(limit)
-    return mf_scraper
-
 if __name__ == "__main__":
     inital_header = "Top Fund Families by Growth Rate"
 
+    list_desc = "List all fund families and exit."
+
     parser = argparse.ArgumentParser()
-    #parser.add_argument("--no-cache", dest="no_cache", action="store_true")
     parser.add_argument("--limit", nargs="+")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--list", help=list_desc, action="store_true")
     args = parser.parse_args()
 
-    mf_scraper = load_all_dataframes(args.limit)
+    mf_scraper = get_mf_scraper(args.limit)
+    if args.list:
+        print("All Fund Families Available:")
+        for ff in mf_scraper.list_all_fund_families():
+            print(ff)
+        sys.exit(0)
+
+    mf_scraper = load_mf_scraper_with_df(mf_scraper)
+
 
     print("done grabbing dataframes.")
     print("loading dash app")

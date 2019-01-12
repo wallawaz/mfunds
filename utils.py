@@ -89,7 +89,6 @@ def load_pickled_page(url):
         data = pickle.load(f)
     return data
 
-
 def get_start_and_end_dates():
     """For consistent caching"""
 

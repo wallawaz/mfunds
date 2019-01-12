@@ -33,7 +33,7 @@ soupit = lambda x: BeautifulSoup(x, "html.parser")
 
 class MFScraper:
     def __init__(self, ds, cache_path, cache_expire_days,
-                 start, end):
+                 start, end, limit=[]):
         self.ds=ds
         self.cache_expire_days=datetime.timedelta(days=cache_expire_days)
         self.session = requests_cache.CachedSession(cache_name=cache_path,
@@ -41,6 +41,7 @@ class MFScraper:
                                                     expire_after=self.cache_expire_days)
         self.start = start
         self.end = end
+        self.limit = limit
         self.ignore = {
             "families": [
                 "TOPS",
@@ -66,14 +67,17 @@ class MFScraper:
             )
             return None
 
-    def get_fund_families(self, limit=[]):
+    def _load_fund_families_table(self):
         self._ensure_pickle(FUND_FAMILIES)
         content = load_pickled_page(FUND_FAMILIES)
         soup = soupit(content)
-        table = soup.find("table")
+        return soup.find("table")
 
-        if limit:
-            fund_families = self._find_specific_fund_families(table, limit)
+    def get_fund_families(self):
+        table = self._load_fund_families_table()
+
+        if self.limit:
+            fund_families = self._find_specific_fund_families(table, self.limit)
         else:
             fund_families = self._find_all_fund_families(table)
         return fund_families
@@ -83,8 +87,8 @@ class MFScraper:
         for link in table.find_all("a"):
             link_name = link.get_text()
             if link_name:
-                for l in limit:
-                    if re.match(link_name, l, re.IGNORECASE):
+                for li in limit:
+                    if re.match(li, link_name, re.IGNORECASE):
                         href = split_new_line(link["href"])
                         fund_families[link_name] = {
                             "href": href
@@ -191,8 +195,8 @@ class MFScraper:
         duration = "{:<10.4}".format(time() - start).strip()
         print(msg.format(d=duration, k=key))
 
-    def run_all(self, limit=[]):
-        self.fund_families = self.get_fund_families(limit=limit)
+    def run_all(self):
+        self.fund_families = self.get_fund_families()
         for key, ff in self.fund_families.items():
             self.fund_families[key]["fund_page"] = self.get_fund_page(ff)
             self.fund_families[key]["symbols"] = (
@@ -241,10 +245,12 @@ class MFScraper:
         if len(unique_symbols) <= size * 2:
             return df
 
+        close = "Close"
         d = "Date"
         gr = "growth_rate"
         min_date = "min_date"
         max_date = "max_date"
+        n = "name"
         s = "symbol"
 
         def min_max_dates(x):
@@ -261,33 +267,55 @@ class MFScraper:
         def growth_rate(x):
             return (x["Close_x"] - x["Close_y"]) / x["Close_x"]
 
+        def winner_loser_text(df, gr, winner_or_loser):
+            mapper = {u: None for u in df[gr].unique()}
+            for m in mapper:
+                percent = df[df[gr] == m][gr].values[0]
+                percent = round(percent * 100, 1)
+                mapper[m] = "{}: {}%".format(winner_or_loser, percent)
+            return mapper
+
         df_min_max = pd.DataFrame(
-            df.groupby(s).apply(min_max_dates)
+            df.groupby([s,n]).apply(min_max_dates)
         ).reset_index()
 
         df_min_max = back_to_datetime64(df_min_max, min_date)
         df_min_max = back_to_datetime64(df_min_max, max_date)
 
-        interested_columns = [d, "Close", s]
+        interested_columns = [close, d, n, s]
 
         # Match to min_date => Close_x
         df_min_max = (
-            df_min_max.merge(df[interested_columns], left_on=[s, min_date],
-                         right_on=[s, d])
+            df_min_max.merge(
+                df[interested_columns], left_on=[s, max_date], right_on=[s, d])
         )
         # Match to max_date => Close_y
         df_min_max = (
-            df_min_max.merge(df[interested_columns], left_on=[s, max_date],
-                         right_on=[s, d])
+            df_min_max.merge(
+                df[interested_columns], left_on=[s, min_date], right_on=[s, d])
         )
         df_min_max[gr] = df_min_max.apply(growth_rate, axis=1)
 
         df_top_5 = df_min_max.nlargest(size, gr)
+        map_text = winner_loser_text(df_top_5, gr, "winner")
+        df_top_5["winner"] = df_top_5[gr].map(map_text)
+
         df_bottom_5 = df_min_max.nsmallest(size, gr)
+        map_text = winner_loser_text(df_bottom_5, gr, "loser")
+        df_bottom_5["winner"] = df_bottom_5[gr].map(map_text)
 
-        df_min_max = pd.concat((df_top_5, df_bottom_5))[[s,gr]]
+        keep = [gr, n, s, "winner"]
+        df_min_max = pd.concat((df_top_5, df_bottom_5))[keep]
 
-        return df.merge(df_min_max, left_on=[s], right_on=[s])
+        nx = n + "_x"
+        keep = [d, close, gr, nx, s, "winner"]
+        df = df.merge(df_min_max, left_on=[s], right_on=[s])
+        return df[keep]
 
     def combine_dataframes(self, dfs):
         return pd.concat(dfs)
+
+    def list_all_fund_families(self):
+        table = self._load_fund_families_table()
+        ff = self._find_all_fund_families(table)
+        return sorted(ff.keys())
