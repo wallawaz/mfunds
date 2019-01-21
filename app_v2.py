@@ -24,14 +24,11 @@ from scraper import MFScraper
 from utils import (
     cache_path,
     df_weekly_to_quarterly,
-    feather_path,
     get_start_and_end_dates,
     load_pickled_page,
     pickled_page_exists,
     pickle_response,
-    read_feather,
     clean_df,
-    write_feather,
 )
 
 SLEEP_INTERVAL = 0.5

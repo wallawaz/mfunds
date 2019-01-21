@@ -36,7 +36,7 @@ soupit = lambda x: BeautifulSoup(x, "html.parser")
 class MFScraper:
     def __init__(self, db_path, ds, cache_path, cache_expire_days,
                  start_date, end_date, limit=[]):
-        self.db = DB(db_path)
+        self.db=DB(db_path)
         self.ds=ds
         self.cache_expire_days=datetime.timedelta(days=cache_expire_days)
         self.session = requests_cache.CachedSession(cache_name=cache_path,
@@ -91,11 +91,13 @@ class MFScraper:
         for link in table.find_all("a"):
             link_name = link.get_text()
             if link_name:
+                link_name = str(link_name)
                 for li in limit:
                     if re.match(li, link_name, re.IGNORECASE):
                         href = split_new_line(link["href"])
                         fund_families[link_name] = {
-                            "href": href
+                            "href": href,
+                            "family": link_name,
                         }
                         break
         return fund_families
@@ -105,8 +107,9 @@ class MFScraper:
         for link in table.find_all("a"):
             if link.get_text() and link.get_text() not in self.ignore["families"]:
                 href = split_new_line(link["href"])
-                fund_families[link.get_text()] = {
-                        "href": href
+                fund_families[str(link.get_text())] = {
+                        "href": href,
+                        "family": link_name,
                     }
         return fund_families
 
@@ -133,7 +136,6 @@ class MFScraper:
             fund_page = split_new_line(a_elem["href"])
 
         return fund_page
-
 
     def get_all_symbols(self, fund_family):
         if fund_family["fund_page"] is None:
@@ -164,12 +166,13 @@ class MFScraper:
             symbol = re.findall(symbol_regex, str(href))
             if not symbol:
                 continue
-            s = symbol[0]
 
+            s = symbol[0]
             if s not in seen and s not in self.ignore["symbols"]:
                 symbols.append({
                     "symbol": s,
                     "name": name,
+                    "fund_family": fund_family.get("family"),
                 })
                 seen.add(s)
         return symbols
@@ -202,8 +205,8 @@ class MFScraper:
                     self.start_date,
                     self.end_date
                 )
-                self.db.insert_df(df_new, new=True, params=symbol_dict)
                 df_new = self.add_columns_to_df(df_new, symbol_dict)
+                self.db.insert_df(df_new, new=True, params=symbol_dict)
                 prices.append(df_new)
                 continue
 
@@ -215,6 +218,7 @@ class MFScraper:
 
             # 0 day difference - Just pull from db.
             if int(last_lookup_day[0]) <= 1:
+                self.logit(time(), symbol_dict["symbol"], "cache_only")
                 prices.append(df)
                 continue
             start_date = missing_dates[1]
@@ -251,6 +255,8 @@ class MFScraper:
             msg = "{d} - Grabbed Prices for: {k}"
         if log_type == "error":
             msg = "{d} - No prices found for: {k}"
+        if log_type == "cache_only":
+            msg = "{d} - Cache only: {k}"
         if not msg:
             return
         duration = "{:<10.4}".format(time() - start).strip()

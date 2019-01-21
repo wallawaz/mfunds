@@ -1,6 +1,6 @@
+# coding: utf8
 import datetime
 from json.decoder import JSONDecodeError
-import feather
 import pandas as pd
 import pandas_datareader as pdr
 import pickle
@@ -26,28 +26,6 @@ def pickle_path(url):
         "data",
         url + ".pickle"
     )
-
-def feather_path(symbol):
-    curr_path = os.path.dirname(os.path.realpath(__file__))
-    return os.path.join(
-        curr_path,
-        "data",
-        "feather",
-        symbol + ".ft"
-    )
-
-def read_feather(path):
-    if os.path.exists(path):
-        return feather.read_dataframe(path)
-    #XXX Load new symbols when in `caching` mode?
-    return None
-
-def write_feather(symbol, df):
-    path = feather_path(symbol)
-
-    # Feather needs a simple index. 
-    df.reset_index(inplace=True)
-    df.to_feather(path)
 
 def get_tingo_weekly(symbol):
     try:
@@ -77,7 +55,7 @@ def clean_df(df):
 def pickle_response(response):
     fn = pickle_path(response.url)
     with open(fn, "wb") as fp:
-        pickle.dump(str(response.content), fp)
+        pickle.dump(response.content, fp)
 
 def pickled_page_exists(url):
     fn = pickle_path(url)
@@ -86,7 +64,7 @@ def pickled_page_exists(url):
 def load_pickled_page(url):
     fn = pickle_path(url)
     with open(fn, "rb") as f:
-        data = pickle.load(f)
+        data = pickle.load(f, encoding="utf-8")
     return data
 
 def get_start_and_end_dates():
