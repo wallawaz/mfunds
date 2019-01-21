@@ -1,3 +1,4 @@
+# coding: utf8
 from bs4 import BeautifulSoup
 import datetime
 from dateutil.relativedelta import relativedelta
@@ -13,6 +14,7 @@ import pandas_datareader.data as web
 
 from time import time
 
+from db import DB
 from utils import (
     cache_path,
     pickled_page_exists,
@@ -32,15 +34,16 @@ soupit = lambda x: BeautifulSoup(x, "html.parser")
 
 
 class MFScraper:
-    def __init__(self, ds, cache_path, cache_expire_days,
-                 start, end, limit=[]):
+    def __init__(self, db_path, ds, cache_path, cache_expire_days,
+                 start_date, end_date, limit=[]):
+        self.db = DB(db_path)
         self.ds=ds
         self.cache_expire_days=datetime.timedelta(days=cache_expire_days)
         self.session = requests_cache.CachedSession(cache_name=cache_path,
                                                     backend="sqlite",
                                                     expire_after=self.cache_expire_days)
-        self.start = start
-        self.end = end
+        self.start_date = start_date
+        self.end_date = end_date
         self.limit = limit
         self.ignore = {
             "families": [
@@ -55,17 +58,18 @@ class MFScraper:
             ]
         }
 
-    def scrape(self, symbol):
+    def scrape(self, symbol, start_date, end_date):
         try:
-            response = web.DataReader(symbol, self.ds, self.start,
-                                      self.end, session=self.session)
-            return response
+            response = web.DataReader(symbol, self.ds, start_date,
+                                      end_date, session=self.session)
         except KeyError:
             print(
                 "Could not retrieve prices for: {}, using {}"
                 .format(symbol,self.ds)
             )
             return None
+        self.db.log_symbol_lookup(symbol)
+        return response
 
     def _load_fund_families_table(self):
         self._ensure_pickle(FUND_FAMILIES)
@@ -170,19 +174,76 @@ class MFScraper:
                 seen.add(s)
         return symbols
 
+    def _find_last_lookup(self, symbol):
+        last_symbol_lookup = self.db.last_symbol_lookup(symbol)
+        if last_symbol_lookup is None:
+            return (None, None)
+        return last_symbol_lookup
+
+    def add_columns_to_df(self, df, d={}):
+        for k, v in d.items():
+            df[k] = v
+        return df
+
     def get_symbol_prices(self, fund_family):
         symbols = fund_family["symbols"]
         if not symbols:
             return None
+
         prices = []
-        for symbol in symbols:
-            df = self.scrape(symbol["symbol"])
-            if df is None:
+        for symbol_dict in symbols:
+
+            # Find all dates we have first.
+            last_lookup_day = self._find_last_lookup(symbol_dict["symbol"])
+            if last_lookup_day[0] is None:
+                # First time seeing this symbol.
+                df_new = self.scrape(
+                    symbol_dict["symbol"],
+                    self.start_date,
+                    self.end_date
+                )
+                self.db.insert_df(df_new, new=True, params=symbol_dict)
+                df_new = self.add_columns_to_df(df_new, symbol_dict)
+                prices.append(df_new)
                 continue
-            df["symbol"] = symbol["symbol"]
-            df["name"] = symbol["name"]
+
+
+            query = self.db.all_prices_query
+            params = [symbol_dict["symbol"]]
+            df = pd.read_sql_query(query, self.db.dbh, params=params)
+            df = self.add_columns_to_df(df, symbol_dict)
+
+            # 0 day difference - Just pull from db.
+            if int(last_lookup_day[0]) <= 1:
+                prices.append(df)
+                continue
+            start_date = missing_dates[1]
+            df_new = self.scrape(symbol_dict["symbol"], start_date, self.end_date)
+            if df_new is not None:
+                df_new = self.add_columns_to_df(df_new, symbol_dict)
+                self.db.insert_df(df_new, params=symbol_dict)
+                df = pd.concat([df, df_new])
+
             prices.append(df)
         return pd.concat(prices)
+
+    def insert_df(self, df, new=False, params={}):
+        table = "symbol_dates"
+        df.columns = [c.lower() for c in df.columns]
+
+        if new:
+            symbol = None
+            name = None
+            for k, v in params.items():
+                if k == "symbol":
+                    symbol = v
+                if k == "name":
+                    name = v
+            if not symbol or not name:
+                raise Exception("Invalid Symbol: {}".format(str(params)))
+            self.db.insert_new_symbol(symbol, name)
+
+        df.to_sql(table, self.db.dbh, if_exists="append")
 
     def logit(self, start, key, log_type):
         msg = None
@@ -214,7 +275,7 @@ class MFScraper:
 
     def merge_symbols_to_daily(self, df, dataframe=False):
         df.reset_index(inplace=True)
-        avgs = df.groupby(["Date"])["Close"].mean()
+        avgs = df.groupby(["date"])["close"].mean()
         if dataframe:
             return pd.DataFrame(avgs).reset_index()
         return avgs
@@ -245,8 +306,8 @@ class MFScraper:
         if len(unique_symbols) <= size * 2:
             return df
 
-        close = "Close"
-        d = "Date"
+        close = "close"
+        d = "date"
         gr = "growth_rate"
         min_date = "min_date"
         max_date = "max_date"
@@ -265,7 +326,7 @@ class MFScraper:
             return df
 
         def growth_rate(x):
-            return (x["Close_x"] - x["Close_y"]) / x["Close_x"]
+            return (x["close_x"] - x["close_y"]) / x["close_x"]
 
         def winner_loser_text(df, gr, winner_or_loser):
             mapper = {u: None for u in df[gr].unique()}
@@ -275,10 +336,12 @@ class MFScraper:
                 mapper[m] = "{}: {}%".format(winner_or_loser, percent)
             return mapper
 
+
         df_min_max = pd.DataFrame(
             df.groupby([s,n]).apply(min_max_dates)
         ).reset_index()
 
+        df = back_to_datetime64(df, d)
         df_min_max = back_to_datetime64(df_min_max, min_date)
         df_min_max = back_to_datetime64(df_min_max, max_date)
 

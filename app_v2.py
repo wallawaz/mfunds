@@ -1,3 +1,4 @@
+# coding: utf8
 import argparse
 from bs4 import BeautifulSoup
 
@@ -49,6 +50,7 @@ def get_app(header, mf_scraper):
 
         color_green = "#088c31"
         color_red = "#FC6955"
+
         selected_ff = mf_scraper.fund_families[selected_family]
         selected_df = selected_ff["prices"]
 
@@ -73,8 +75,8 @@ def get_app(header, mf_scraper):
 
             funds.append(
                 go.Scatter(
-                    x=df_symbol["Date"],
-                    y=df_symbol["Close"],
+                    x=df_symbol["date"],
+                    y=df_symbol["close"],
                     text=df_symbol["name_x"] + "<br>" + df_symbol["winner"],
                     mode="lines",
                     name=i,
@@ -90,14 +92,14 @@ def get_app(header, mf_scraper):
 
     return app
 
-def get_mf_scraper(limit):
+def get_mf_scraper(limit, db_path):
 
     ds = "yahoo"
     cache_name = cache_path()
 
     # 7 day cache expiration.
     start_date, end_date = get_start_and_end_dates()
-    mf_scraper = MFScraper(ds, cache_name, 7, start_date, end_date,
+    mf_scraper = MFScraper(db_path, ds, cache_name, 7, start_date, end_date,
                            limit=limit)
     return mf_scraper
 
@@ -120,8 +122,8 @@ def load_mf_scraper_with_df(mf_scraper):
 def time_series_graphes(df):
     graphs = [
         go.Scatter(
-            x=df[df.fund_family == i]["Date"],
-            y=df[df.fund_family == i]["Close"],
+            x=df[df.fund_family == i]["date"],
+            y=df[df.fund_family == i]["close"],
             text=i,
             name=i,
             mode="lines",
@@ -198,14 +200,16 @@ if __name__ == "__main__":
     inital_header = "Top Fund Families by Growth Rate"
 
     list_desc = "List all fund families and exit."
+    db_desc = "Path for sqlite db storing pricing info."
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", nargs="+")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--list", help=list_desc, action="store_true")
+    parser.add_argument("--db", help=db_desc, default="data/mf.sqlite")
     args = parser.parse_args()
 
-    mf_scraper = get_mf_scraper(args.limit)
+    mf_scraper = get_mf_scraper(args.limit, args.db)
     if args.list:
         print("All Fund Families Available:")
         for ff in mf_scraper.list_all_fund_families():
@@ -213,7 +217,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     mf_scraper = load_mf_scraper_with_df(mf_scraper)
-
 
     print("done grabbing dataframes.")
     print("loading dash app")
